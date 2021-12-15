@@ -1,0 +1,1156 @@
+---
+title: "MAR P2 bulk RNA-seq"
+subtitle: |
+  | Batch 1 and Batch 2 samples. December 2021. 
+ 
+author: |
+  | Data analysis by:
+  | Karol Cichewicz, kcichewicz@ucdavis.edu
+  |
+  | Sample collection, RNA prep, and QC:
+  | Matthew Bruce (Van de Water lab), 
+  | Cesar Canales and Rebecca Ortiz (Nord lab)
+  
+
+output:
+  html_document:
+    code_folding: hide
+    css: style.css
+    theme: spacelab
+    toc: true
+    toc_depth: 4
+    toc_float: true
+urlcolor: blue
+---
+
+```{r, message=FALSE, warning = FALSE, error=FALSE, echo=TRUE, cache=FALSE}
+
+# Directory structure
+github_dir <- file.path("G:/Shared drives/Nord Lab - Computational Projects/MAR_P2_bulk_RNA-seq")
+
+setwd(github_dir)
+
+
+# Global R markdown code chunk options
+knitr::opts_chunk$set(message=FALSE, 
+                      warning = FALSE, 
+                      error=FALSE, 
+                      echo=TRUE, 
+                      cache=TRUE, 
+                      fig.width = 7, fig.height = 6, 
+                      fig.align = 'left')
+
+```
+
+
+# 1. Data pre-processing and QC scripts
+
+```{bash, eval = FALSE}
+
+# fastq files were transfered to our GCP computer: /mnt/disks/data2/MAR 
+
+# The previous batch of this experiment is located at fastq/MAR1. fastq/MAR2 contains the new batch.  
+
+fastqc \
+--threads 15 \
+--outdir /mnt/disks/data2/MAR/fastQC \
+/mnt/disks/data2/MAR/fastq/MAR*/*q.gz
+
+```
+
+
+```{r}
+# Alignments to Ensembl Rnor_6.0 and UCSC Rn7
+
+# Links:
+
+# http://ftp.ensembl.org/pub/release-104/gtf/rattus_norvegicus/Rattus_norvegicus.Rnor_6.0.104.gtf.gz
+
+# http://ftp.ensembl.org/pub/release-104/fasta/rattus_norvegicus/dna/Rattus_norvegicus.Rnor_6.0.dna.toplevel.fa.gz
+
+# https://hgdownload.soe.ucsc.edu/goldenPath/rn7/bigZips/rn7.fa.gz
+# https://hgdownload.soe.ucsc.edu/goldenPath/rn7/bigZips/genes/
+
+```
+
+```{bash, eval = FALSE}
+# Index generation
+
+STAR \
+--runMode genomeGenerate \
+--runThreadN 15 \
+--genomeDir /mnt/disks/data2/genomes/Rat/rn7_UCSC/STAR_index/ \
+--genomeFastaFiles /mnt/disks/data2/genomes/Rat/rn7_UCSC/rn7.fa \
+--sjdbGTFfile /mnt/disks/data2/genomes/Rat/rn7_UCSC/refGene.gtf \
+--sjdbOverhang 149
+
+
+
+STAR \
+--runMode genomeGenerate \
+--runThreadN 15 \
+--genomeDir /mnt/disks/data2/genomes/Rat/rn7_UCSC/STAR_index_ncbi/ \
+--genomeFastaFiles /mnt/disks/data2/genomes/Rat/rn7_UCSC/rn7.fa \
+--sjdbGTFfile /mnt/disks/data2/genomes/Rat/rn7_UCSC/ncbiRefSeq.gtf \
+--sjdbOverhang 149
+
+
+STAR \
+--runMode genomeGenerate \
+--runThreadN 15 \
+--genomeDir /mnt/disks/data2/genomes/Rat/Rnor_6.0_Ref/STAR_index/ \
+--genomeFastaFiles /mnt/disks/data2/genomes/Rat/Rnor_6.0_Ref/Rattus_norvegicus.Rnor_6.0.dna.toplevel.fa \
+--sjdbGTFfile /mnt/disks/data2/genomes/Rat/Rnor_6.0_Ref/Rattus_norvegicus.Rnor_6.0.104.gtf \
+--sjdbOverhang 149
+
+```
+
+
+# 2. Read processing scripts
+
+```{bash, eval = FALSE}
+
+# Extract unique sample names for MAR1
+ls /mnt/disks/data2/MAR/fastq/MAR1/*gz | sed -e 's/\.fastq.gz$//' | sed -e 's/1_001\|2_001$//' |  uniq
+
+
+# Extract unique sample names for MAR2
+ls /mnt/disks/data2/MAR/fastq/MAR2/*gz | sed -e 's/\.fq.gz$//' | sed -e 's/_1\|_2$//' | uniq
+
+
+# Defines an array with sample names, 
+
+# From within the MAR1 fastq dir:
+samples=($(ls *gz | sed -e 's/\.fastq.gz$//' | sed -e 's/1_001\|2_001$//' | uniq))
+
+# From within the MAR2 fastq dir:
+samples=($(ls *gz | sed -e 's/\.fq.gz$//' | sed -e 's/_1\|_2$//' | uniq))
+
+# Execute scripts in for loops:
+for i in "${samples[@]}"; do ./alignment_Rnor6.sh $i > ./logs/$i.align_log.txt 2>&1; done
+for i in "${samples[@]}"; do ./alignment_Rnor6_2.sh $i > ./logs/$i.align2_log.txt 2>&1; done
+for i in "${samples[@]}"; do ./alignment2_rn7_UCSC.sh $i > ./logs/$i.align2_log.txt 2>&1; done
+
+# alignment.sh script is included in this repository 
+```
+
+
+```{bash, eval = FALSE}
+
+# From within the bam directory
+samples=($(ls *bam | sed -e 's/_Aligned.sortedByCoord.out.bam$//'))
+
+echo "${samples[@]}"
+for i in "${samples[@]}"; do ./dedup_featureCounts.sh $i > ./logs/$i.dedup_FC_log.txt 2>&1; done
+
+
+for i in "${samples[@]}"; do ./dedup_featureCounts_UCSC.sh $i > ./logs/$i.dedup_FC_UCSC_log.txt 2>&1; done
+```
+
+
+# 3. Data analysis
+
+```{r}
+
+setwd("G:/Shared drives/Nord Lab - Computational Projects/MAR_P2_bulk_RNA-seq")
+
+metadata <- read.csv("MAR_metadata_bulk_combined_updated_081921.csv")
+
+```
+
+
+```{r}
+
+### Read UCSC data
+Rn7_files <- list.files("./featureCount_UCSC_Rn7/") 
+
+fc_list2 <- lapply(Rn7_files, function(x){
+  
+  read.table(paste0("./featureCount_UCSC_Rn7/", x), header = TRUE)
+  
+})
+
+fc_df2 <- Reduce(function(x, y) merge(x, y, by=c(colnames(fc_list2[[1]])[1:6])), fc_list2)
+
+fc2_colnames <- gsub("X.mnt.disks.data2.MAR.bam_sorted_dedup_dir_UCSC.", "", colnames(fc_df2))
+fc2_colnames <- gsub(".bam", "", fc2_colnames)
+
+
+colnames(fc_df2) <- fc2_colnames
+
+
+# Manually order count df to match metadata
+fc_df2 <- fc_df2[,c("Geneid", "Chr", "Start", "End", "Strand", "Length",
+         "1_S2_L002_R",
+         "2_S10_L003_R",  
+         "3_S3_L002_R",   
+         "4_S4_L002_R", 
+         "5_S11_L003_R", 
+         "6_S12_L003_R",
+         "7_S13_L003_R", 
+         "8_S5_L002_R",
+         "9_S14_L003_R",
+         "10_S6_L002_R",
+         "11_S7_L002_R",
+         "12_S8_L002_R",
+         "13_S15_L003_R", 
+         "14_S9_L002_R", 
+         "15_S16_L003_R",
+         "IgG1_1", 
+         "IgG1_2", 
+         "IgG1_3",
+         "IgG1_4",
+         "IgG2_1", 
+         "IgG2_2",
+         "IgG2_3",
+         "IgG2_4",
+         "RNA4_1",
+         "RNA4_2",
+         "RNA4_3",
+         "RNA4_4",
+         "IgG3_1",
+         "IgG3_2",
+         "IgG3_3",
+         "IgG3_4",
+         "FcRn4_1",
+         "FcRn4_2",
+         "FcRn4_3",
+         "FcRn4_4",
+         "RNA1_1",
+         "RNA1_2",
+         "RNA1_3",
+         "RNA1_4",
+         "RNA2_1",
+         "RNA2_2",
+         "RNA2_3",
+         "RNA2_4")]
+
+
+fc_df_UCSC_Rn7 <- fc_df2
+
+# Removing objects to limit ambiguity in the environment.
+rm(fc_df2)
+#rm(fc_df)
+
+```
+
+## 3.1 Mapped reads
+
+Reads were aligned to UCSC Rn7 and Ensembl geneme Rnor_6.0 genome. The Ensembl genome produced 20x less mapped reads than alignment using the UCSC genome. There may be something wrong with the reference genome I constructed or the processing pipeline. The previous version of this analysis used Ensembl Rnor genome, which yielded the expected alignment statistics. I think that genome was downloaded from the Illumina iGenomes repository.
+
+For the current analysis, I use the UCSC Rn7 genome only. Batch 2 was generated using polyA-enrichment technique, resulting in lower transcriptomic complexity, that may be more suited for the UCSC genome, which lacks some non-coding and predicted transcript annotations. Results of the Batch 1 DE are very similar in the current and  earlier version of this analysis using the Ensembl reference.
+
+```{r, fig.width = 9, fig.height = 4}
+
+library(ggplot2)
+library(reshape2)
+library(cowplot)
+
+metadata$Mapped_reads_UCSC_Rn7 <- colSums(fc_df_UCSC_Rn7[,c(7:49)])
+
+metadata$RNA_seq_batch <- as.factor(metadata$RNA_seq_batch)
+
+
+ggplot(metadata, aes(x = RNA_ID, y = Mapped_reads_UCSC_Rn7 / 10^6, color = RNA_seq_batch))+
+  geom_point()+
+  theme_cowplot()+
+  labs(x = "Samples", 
+       y = "Mapped reads [Millions]",
+       title = "Batch 1 and Batch 2 are sequenced to similar depth")+
+  theme(plot.title = element_text(size = rel(0.9)))
+
+
+
+
+# Sanity check of the old batch 1 count file
+old_batch1 <- read.table("G:/Shared drives/Nord Lab - Computational Projects/MAA-P2/feature_counts.txt", 
+                         header = TRUE)
+
+old_batch1_colnames <- gsub("X.share.nordlab.users.kcichewicz.MAA.scripts.STAR_alignment.", "", 
+                            colnames(old_batch1))
+
+old_batch1_colnames <- gsub(".bam", "", 
+                            old_batch1_colnames)
+
+colnames(old_batch1) <- old_batch1_colnames
+
+#colSums(old_batch1[,c(7:21)]) / 10^6 
+
+# Values are within the ballpark of the recent UCSC alignment: 32, 33, 29, 31, 44, 42 Millions of reads. They are ~50% higher than the UCSC alignment due to the presence of predicted genes. 
+  
+```
+
+## 3.2 rRNA content
+
+```{r, fig.width = 9, fig.height = 4}
+
+#dplyr::filter(fc_df_UCSC_Rn7, Geneid == "Rn45s")[,c(7:49)]
+
+
+metadata$Rn45s_reads <- as.numeric(dplyr::filter(fc_df_UCSC_Rn7, Geneid == "Rn45s")[,c(7:49)])
+metadata$Fraction_of_rRNA <- metadata$Rn45s_reads / metadata$Mapped_reads_UCSC_Rn7
+
+metadata$RNA_seq_batch <- as.factor(metadata$RNA_seq_batch)
+
+
+ggplot(metadata, aes(x = RNA_ID, y = Fraction_of_rRNA, 
+                 color = RNA_seq_batch))+
+  geom_point()+
+  theme_cowplot()+
+  labs(x = "Samples", 
+       y = "Fraction of rRNA reads \n inferred from Rn45s counts",
+       title = "Batch 1 has more rRNA reads because it was processed using rRNA depletion \n instead of polyA enrichment. The overall amount of rRNA reads is not concerning")+
+  theme(plot.title = element_text(size = rel(0.9)))
+
+```
+
+## 3.3 Xist content
+
+```{r, fig.width = 9, fig.height = 4}
+
+# In Rn7 Xist is annotated as LOC100911498
+
+# https://genome.ucsc.edu/cgi-bin/hgc?hgsid=1231341959_KptCXTNCacrAQmfv5IGbxvCeUzFY&db=rn7&c=chrX&l=68474474&r=68497336&o=68474986&t=68492500&g=ncbiRefSeqCurated&i=NR_132635.1
+
+metadata$Xist_reads <- as.numeric(dplyr::filter(fc_df_UCSC_Rn7, Geneid == "LOC100911498")[,c(7:49)])
+
+metadata$Fraction_of_Xist <- metadata$Xist_reads / metadata$Mapped_reads_UCSC_Rn7
+
+
+
+ggplot(metadata, aes(x = RNA_ID, y = Fraction_of_Xist, 
+                 color = Sex,
+                 shape = RNA_seq_batch))+
+  geom_point()+
+  theme_cowplot()+
+  labs(x = "Samples", 
+       y = "Fraction of Xist reads",
+       title = "Xist expression confirms correct sex annotation in the metadata")+
+  theme(plot.title = element_text(size = rel(0.9)))
+
+```
+
+
+## 3.4 MDS plots
+
+```{r}
+library(edgeR)
+
+counts <- fc_df_UCSC_Rn7
+
+min.cpm.criteria = 1   # a reasonable rule-of-thumb threshold
+
+test.data <- counts[, 7:49]
+rownames(test.data) <- counts$Geneid
+
+
+test.samples <- 1:nrow(metadata)
+min.cpm <- min.cpm.criteria
+
+y <- DGEList(counts=test.data, group=metadata$genotype)
+keep <- rowSums(cpm(y)>min.cpm) >=2 #keeps only genes expressed in above min.cpm in at least 2 libraries in each group 
+y <- y[keep, , keep.lib.sizes=FALSE]
+y <- calcNormFactors(y) # Normalizes for RNA composition
+y <- estimateCommonDisp(y) # Estimates common dispersions. Calculates pseudo-counts, a type of normalized counts. Don't misteke them with 0+x type counts from other packages. Also "users are advised not to interpret the psuedo-counts as general-purpose normalized counts".
+y <- estimateTagwiseDisp(y) #Estimates dispersions. Applicable only to experiments with single factor.
+#Alternatively the two commands from above can be replaced with y <- estimateDisp(y)
+
+
+#metadata <- arrange(metadata, counts_colnames)
+
+#MDS plot using ggplot.
+MDS_data1 <- plotMDS(y, plot = FALSE, dim.plot = c(1, 2))
+MDS_data2 <- plotMDS(y, plot = FALSE, dim.plot = c(3, 4))
+MDS_data3 <- plotMDS(y, plot = FALSE, dim.plot = c(5, 6))
+MDS_data4 <- plotMDS(y, plot = FALSE, dim.plot = c(7, 8))
+MDS_data5 <- plotMDS(y, plot = FALSE, dim.plot = c(9, 10))
+
+MDS_data2 <- data.frame(Leading_logFC_dim_1 = MDS_data1$x, 
+                        Leading_logFC_dim_2 = MDS_data1$y,
+                        Leading_logFC_dim_3 = MDS_data2$x, 
+                        Leading_logFC_dim_4 = MDS_data2$y,
+                        Leading_logFC_dim_5 = MDS_data3$x, 
+                        Leading_logFC_dim_6 = MDS_data3$y,
+                        Leading_logFC_dim_7 = MDS_data4$x, 
+                        Leading_logFC_dim_8 = MDS_data4$y,
+                        Leading_logFC_dim_9 = MDS_data5$x, 
+                        Leading_logFC_dim_10 = MDS_data5$y)
+
+
+MDS_data2 <- data.frame(Samples=rownames(MDS_data1$distance.matrix.squared), MDS_data2, metadata)
+
+#Sanity check
+#all(MDS_data2$Samples == MDS_data2$counts_colnames)
+
+rownames(MDS_data2) <- NULL
+MDS_data2$Animal <- as.factor(MDS_data2$Animal)
+
+```
+
+
+
+```{r, fig.width=10, fig.height=8, fig.cap="Multidimensional scaling separates RNA-seq batches along the 1st dimension MDS does not suggest presence of outlier samples"}
+
+# MDS Plot with colored DPC
+#Condition and sex
+
+point_size = 3
+
+MDS_plot <- function(variable, dim_x, dim_y){
+  ggplot(MDS_data2, aes(x=get(paste0("Leading_logFC_dim_", dim_x)), 
+                        y=get(paste0("Leading_logFC_dim_", dim_y)), 
+                        colour=get(variable), 
+                        shape=RNA_seq_batch,
+                        label = Samples))+
+  geom_point(size=point_size, alpha=0.5)+
+  theme_bw()+
+  labs(title = "MDS plot", color = variable, 
+       x = paste0("Dim_", dim_x),
+       y = paste0("Dim_", dim_y))+
+  theme(plot.title = element_text(size = rel(1.2), hjust=0.5))+
+  theme(axis.text.x = element_text(size=12), text = element_text(size=12))+
+  theme(legend.position = "bottom")
+
+}
+
+
+plot_grid(MDS_plot("Condition", 1, 2),
+          MDS_plot("Condition", 3, 4),
+          MDS_plot("Condition", 5, 6),
+          MDS_plot("Condition", 7, 8),
+          nrow = 2)
+          
+
+```
+
+```{r, fig.width=10, fig.height=8, fig.cap="Multidimensional scaling separates RNA-seq samples by sex along the 3rd and 4th dimension MDS does not suggest presence of outlier samples"}
+
+plot_grid(MDS_plot("Sex", 1, 2),
+          MDS_plot("Sex", 3, 4),
+          MDS_plot("Sex", 5, 6),
+          MDS_plot("Sex", 7, 8),
+          nrow = 2)
+
+```
+
+
+## 3.5 PCA
+```{r, fig.width=8, fig.height=8}
+
+# Centering the PCA doesn't have any major effect on clustering. It just flips Sample 1 and Sample 2 alongPC2.
+# Scaling emphasizes batch effects along PC1, but does not separate batches completely. It makes sense because it reduces the influence of sequencing depth(color seq depth on PCs?). 
+# PC2 resolves batch effects regardless of centering and scaling.
+# PC1 accounts for ~97 percent of the variance regardless of centering and scaling. 
+
+pca_data <- prcomp(counts[, 7:49], center = TRUE, scale = TRUE)
+
+pca_data_var_expl <- pca_data$sdev^2 / sum(pca_data$sdev^2)
+scree <- data.frame("PC" = paste0(seq(1:length(pca_data_var_expl))), "Var_exp" = pca_data_var_expl)
+
+pca_data <- as.data.frame(pca_data$rotation)
+
+pca_data$Sample <- colnames(pca_data)
+pca_data <- data.frame(metadata, pca_data)
+
+# save.image("G:/Shared drives/Nord Lab - Computational Projects/MAR_P2_integrated_batches_2021/session_12_08_21.RData")
+
+```
+
+
+### 3.5.1 Scree Plot
+```{r, fig.width=4, fig.height=4, fig.cap= "PC1 accounts for 97.4% of variation in the data"}
+
+scree$PC <- as.numeric(scree$PC)
+
+ggplot(scree[1:5,], aes(x = PC, y = Var_exp))+
+  geom_point()+
+  geom_line()+
+  scale_y_continuous(breaks=seq(0, 1, 0.1))+
+  theme_bw()+
+  labs(title = "Scree plot", x = "PC", y = "Variance explained")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+### 3.5.2 PCA plots
+```{r, fig.width=10, fig.height=8}
+
+PCA_plot <- function(dim_x, dim_y, title){
+
+  ggplot(pca_data, aes(x = get(dim_x), y = get(dim_y), color = RNA_seq_batch, shape = Sex))+
+  geom_point(alpha = 0.7, size = 5)+
+  theme_bw()+
+  labs(title = title, x = dim_x, y = dim_y)+
+  theme(plot.title = element_text(hjust = 0.5))
+
+}
+
+plot_grid(PCA_plot("PC1", "PC2", "PC1 vs PC2"),
+          PCA_plot("PC3", "PC4", "PC3 vs PC4"),
+          nrow = 2)
+
+```
+
+
+### 3.5.3 PCA loadings
+
+```{r}
+# Top genes driving PC1 and PC2 = PC loadings
+
+pca_data <- prcomp(counts[, 7:49], center = TRUE, scale = TRUE)
+pca_genes <- pca_data$x
+rownames(pca_genes) <- counts$Geneid
+
+
+PC1_genes <- data.frame(sort(abs(pca_genes[,"PC1"]), decreasing=TRUE)[1:200])
+PC2_genes <- data.frame(sort(abs(pca_genes[,"PC2"]), decreasing=TRUE)[1:200])
+
+names(PC1_genes) <- "PC1_loadings"
+names(PC2_genes) <- "PC2_loadings"
+
+```
+
+#### 3.5.3.1 PC1
+```{r}
+
+knitr::kable(head(PC1_genes, 10))
+
+```
+
+
+#### 3.5.3.2 PC2
+```{r}
+# Rn45s is the top gene in PC2 
+
+knitr::kable(head(PC2_genes, 10))
+
+```
+
+## 3.6 DE of batch 1 vs 2
+
+This is looking great. Replication-dependent histones are not polyadenylated. They are present in the rRNA-depletd samples (Batch 1) but not in the polyA-enriched samples (Batch 2). 
+
+```{r}
+library(DT)
+# Run DE comparing the two batches
+#metadata
+counts <- fc_df_UCSC_Rn7
+metadata$Count_colnames <- colnames(counts)[7:49]
+
+source("DE_function_comparing_batches.R")
+DE_of_batches <- DE_function_comparing_batches()
+
+datatable(DE_of_batches, rownames = FALSE, filter="top", options = list(pageLength = 15, scrollX=T))
+
+```
+
+### Hist1h4m count table - sanity check
+```{r}
+
+knitr::kable(melt(dplyr::filter(counts, Geneid == "Hist1h4m")))
+
+```
+
+
+```{r, cache=TRUE}
+
+# GO enrichment in 102 DE genes between batch 1 and batch 2. 
+
+# dplyr::filter(DE_of_batches, FDR < 1e-80) # 102 genes
+#source("GO_analysis.R")  
+#Batches_GO <- GO_analysis(DE_of_batches, 8744)
+
+# Top GO categories:
+  # nucleosome assembly
+  # DNA replication-dependent nucleosome ass...
+  # chromatin silencing
+  # innate immune response in mucosa
+  # negative regulation of megakaryocyte dif...
+  # nucleosome positioning
+
+
+### GO BP for 100 PC1 and PC2 loading genes
+source("GO_analysis_input_genes.R")
+
+PC1_GO <- GO_analysis_input_genes(DE_of_batches, rownames(PC1_genes)[1:100], 8744)
+PC2_GO <- GO_analysis_input_genes(DE_of_batches, rownames(PC2_genes)[1:100], 8744)
+
+```
+
+### 3.6.1 PC1 GO enrichment in the top 100 PC loading genes
+```{r}
+
+knitr::kable(head(PC1_GO[[1]], 20))
+
+```
+
+### 3.6.2 PC2 GO enrichment in the top 100 PC loading genes
+```{r}
+
+knitr::kable(head(PC2_GO[[1]], 20))
+
+```
+
+
+Calculate RPKM values
+```{r, cache=TRUE}
+# Calculate RPKM
+
+### Generate Rn6 list of exon sizes 
+# Method description at: https://www.biostars.org/p/83901/
+library(GenomicFeatures)
+
+txdb <- makeTxDbFromGFF("refGene.gtf", format="gtf") #The file is too big to be uploaded to GitHub. 
+exons.list.per.gene <- exonsBy(txdb, by="gene")
+
+# Parallelized, increasing the speed >2x on a 4-core (logical) machine. 
+# Use mclapply instead of parLapply if you use a Mac.
+cl <- makeCluster(detectCores())
+exonic.gene.sizes <- parallel::parLapply(cl, exons.list.per.gene,function(x){sum(width(reduce(x)))})
+stopCluster(cl)
+
+# Calculate RPKM
+
+exp.data <- counts[,7:49]
+rownames(exp.data) <- counts$Geneid
+
+# Sanity check = PASSED
+#all(names(exonic.gene.sizes) == rownames(exp.data))
+
+gene.lengths <- as.numeric(lapply(1:nrow(exp.data), function(x) FUN= as.numeric(exonic.gene.sizes[rownames(exp.data)[x]])))
+
+rpkm.data_log <- as.data.frame(rpkm(exp.data, gene.length=gene.lengths, log=T, prior.count=.25))
+rpkm.data_linear <- as.data.frame(rpkm(exp.data, gene.length=gene.lengths, log=F))
+
+```
+
+
+# 4. Differential gene expression
+
+```{r}
+
+#rownames(counts) <- counts$Geneid
+#counts <- counts[,7:49]
+#counts <- as.matrix(counts)
+
+# CPM threshold of 1
+# Sex is a covariate
+# Non-batch corrected
+source("DE_function.R")
+
+DE_b1 <- DE_function(1)
+DE_b2 <- DE_function(2)
+DE_b1_and_2 <- DE_function(c(1,2))
+
+
+# Batch corrected
+# With CPM threshold of 1
+# Sex is a covariate
+source("DE_function_batch.R")
+
+DE_b1_and_2_batch_cor <- DE_function_batch(c(1,2))
+
+### DE analysis without sex covariate
+
+source("DE_function_no_sex.R")
+
+DE_b1_no_sex <- DE_function_no_sex(1)
+DE_b2_no_sex <- DE_function_no_sex(2)
+DE_b1_and_2_no_sex <- DE_function_no_sex(c(1,2))
+
+
+source("DE_function_sex_specific.R")
+
+DE_b1_Male <- DE_function_sex_specific(1, "M")
+DE_b2_Male <- DE_function_sex_specific(2, "M")
+DE_b1_and_2_Male <- DE_function_sex_specific(c(1,2), "M")
+
+DE_b1_Female <- DE_function_sex_specific(1, "F")
+DE_b2_Female <- DE_function_sex_specific(2, "F")
+DE_b1_and_2_Female <- DE_function_sex_specific(c(1,2), "F")
+
+### DE expression with PCAs as covariates ###
+
+# I'm including both replicates because PCA was run on the complete dataset
+#source("DE_function_w_PCA.R")
+
+#DE_b1_and_2_test <- DE_function_w_PCA(c(1,2))
+#head(DE_b1_and_2_test$FDR)
+
+#sum(DE_b1_and_2_test$FDR < 0.1)
+
+#              N of genes passing FDR < 0.1
+# No PCs     : 1
+# PC1        : 0
+# PC1 + batch: 0
+# PC1 and 2  : 0
+# PC1 to 5   : 0
+# PC1 to 10  : 8
+
+# Fraction of rRNA: 0
+# Sex             : 1
+# Sex + Batch:  0
+
+# Conclusion: Adding PCs does not improve the DE model
+```
+
+## 4.1 Volcano plots
+
+### 4.1.1 Overview
+```{r, fig.width = 12, fig.height = 9, fig.cap="Y axis us autoscaled"}
+# DE sets dims
+
+#dim(DE_b1)  # 12360
+#dim(DE_b2)  # 12413
+#dim(DE_b1_and_2) # 12610
+#dim(DE_b1_and_2_batch_cor) # 12610
+
+
+source("volcano_plot.R")
+
+plot_grid(
+  volcano_plot(DE_b1, "Batch_1"),
+  volcano_plot(DE_b2, "Batch_2"),
+  volcano_plot(DE_b1_and_2, "Batch_1_and_2_combined"),
+  volcano_plot(DE_b1_and_2_batch_cor, "Batch_1_and_2_batch_corrected"),
+  nrow = 2
+)
+
+
+```
+
+### 4.1.2 Batch 1 vs Batch 2
+```{r, fig.width = 12, fig.height = 9, fig.cap="DE models include a sex covariate"}
+
+library(ggrepel)
+
+source("volcano_plot_Y_capped.R")
+#volcano_plot_label_Y_capped(DE_b1, "Batch_1")
+
+plot_grid(
+  volcano_plot_label_Y_capped(DE_b1, "Batch_1"),
+  volcano_plot_label_Y_capped(DE_b2, "Batch_2")
+)
+
+```
+
+#### 4.1.2.1 Batch 1 table
+```{r}
+
+datatable(dplyr::filter(DE_b1, PValue < 0.05), rownames = FALSE, filter="top", options = list(pageLength = 15, scrollX=T))
+
+```
+
+#### 4.1.2.2 Batch 2 table
+```{r}
+
+datatable(dplyr::filter(DE_b2, PValue < 0.05), rownames = FALSE, filter="top", options = list(pageLength = 15, scrollX=T))
+
+```
+
+
+### 4.1.3 Combined batches
+```{r, fig.width = 12, fig.height = 9, fig.cap="DE models include a sex covariate. The batch_corrected model includes a batch covariate."}
+
+plot_grid(
+  volcano_plot_label_Y_capped(DE_b1_and_2, "Batch_1_and_2_combined"),
+  volcano_plot_label_Y_capped(DE_b1_and_2_batch_cor, "Batch_1_and_2_batch_corrected")
+)
+
+```
+
+#### 4.1.3.1 Combined batches table
+```{r}
+
+datatable(dplyr::filter(DE_b1_and_2, PValue < 0.05), rownames = FALSE, filter="top", options = list(pageLength = 15, scrollX=T))
+
+```
+
+#### 4.1.3.2 Combined batches, batch cor table
+```{r}
+
+datatable(dplyr::filter(DE_b1_and_2_batch_cor, PValue < 0.05), rownames = FALSE, filter="top", options = list(pageLength = 15, scrollX=T))
+
+```
+
+
+### 4.1.4 Batch 1 vs Batch 2 wo sex cov.
+```{r, fig.width = 12, fig.height = 9, fig.cap="DE models do not include sex covariate."}
+### No sex covariate = model not corrected for sex effects ### 
+
+plot_grid(
+  volcano_plot_label_Y_capped(DE_b1_no_sex, "Batch_1"),
+  volcano_plot_label_Y_capped(DE_b2_no_sex, "Batch_2")
+)
+
+```
+
+#### 4.1.4.1 Batch wo sex cov. table
+```{r}
+
+datatable(dplyr::filter(DE_b1_no_sex, PValue < 0.05), rownames = FALSE, filter="top", options = list(pageLength = 15, scrollX=T))
+
+```
+
+#### 4.1.4.2 Batch wo sex cov. table
+```{r}
+
+datatable(dplyr::filter(DE_b2_no_sex, PValue < 0.05), rownames = FALSE, filter="top", options = list(pageLength = 15, scrollX=T))
+
+```
+
+### 4.1.5 Male DE
+```{r, fig.width = 12, fig.height = 9}
+#volcano_plot_label_Y_capped(DE_b1_and_2_no_sex, "Batch_1_and_2_combined")
+
+### Sex-specific DE ###
+plot_grid(
+  volcano_plot_label_Y_capped(DE_b1_Male, "Batch 1 Male"),
+  volcano_plot_label_Y_capped(DE_b2_Male, "Batch 2 Male")
+)
+
+```
+
+#### 4.1.5.1 Male DE Batch 1 table
+```{r}
+
+datatable(dplyr::filter(DE_b1_Male, PValue < 0.05), rownames = FALSE, filter="top", options = list(pageLength = 15, scrollX=T))
+
+```
+
+#### 4.1.5.2 Male DE Batch 1 table
+```{r}
+
+datatable(dplyr::filter(DE_b2_Male, PValue < 0.05), rownames = FALSE, filter="top", options = list(pageLength = 15, scrollX=T))
+
+```
+
+
+### 4.1.6 Female DE
+```{r, fig.width = 12, fig.height = 9}
+plot_grid(
+  volcano_plot_label_Y_capped(DE_b1_Female, "Batch 1 Female"),
+  volcano_plot_label_Y_capped(DE_b2_Female, "Batch 2 Female")
+)
+
+```
+
+#### 4.1.6.1 Female DE Batch 1 table
+```{r}
+
+datatable(dplyr::filter(DE_b1_Female, PValue < 0.05), rownames = FALSE, filter="top", options = list(pageLength = 15, scrollX=T))
+
+```
+
+#### 4.1.6.2 Male DE Batch 1 table
+```{r}
+
+datatable(dplyr::filter(DE_b2_Female, PValue < 0.05), rownames = FALSE, filter="top", options = list(pageLength = 15, scrollX=T))
+
+```
+
+
+
+# 5. Concordance of DE between batches
+
+## 5.1 Combined sexes
+```{r,  fig.width = 10, fig.height = 8}
+## Merge and compare DE signatures in the two batches
+colnames(DE_b1) <- c("gene_id", "logFC_b1", "logCPM_b1", "LR_b1", "PValue_b1", "FDR_b1")
+colnames(DE_b2) <- c("gene_id", "logFC_b2", "logCPM_b2", "LR_b2", "PValue_b2", "FDR_b2")
+
+DE_1_and_2_merged <- merge(DE_b1, DE_b2, by = "gene_id") # 12191 genes
+
+x <- DE_1_and_2_merged
+
+test <- ifelse(x$PValue_b1, "Non significant")
+test <- ifelse(x$PValue_b1 < 0.05, "PValue < 0.05 in B1", test)
+test <- ifelse(x$PValue_b2 < 0.05, "PValue < 0.05 in B2", test)
+test <- ifelse(x$PValue_b1 < 0.05 & x$PValue_b2 < 0.05, "PValue < 0.05 in B1 and B2", test)
+
+DE_1_and_2_merged$DE_significance <- test
+DE_1_and_2_merged_sig <- dplyr::filter(DE_1_and_2_merged, PValue_b1 < 0.05 | PValue_b2 < 0.05) # 1345 genes
+
+# Cap at -1 and +1 log2FC
+df <- DE_1_and_2_merged_sig
+df$logFC_b1 <- ifelse(df$logFC_b1 < -1, -1, df$logFC_b1)
+df$logFC_b1 <- ifelse(df$logFC_b1 > 1, 1, df$logFC_b1)
+
+df$logFC_b2 <- ifelse(df$logFC_b2 < -1, -1, df$logFC_b2)
+df$logFC_b2 <- ifelse(df$logFC_b2 > 1, 1, df$logFC_b2)
+
+df$DE_significance <- as.factor(df$DE_significance)
+
+library(ggrepel)
+
+ggplot()+
+  geom_hline(yintercept = 0, linetype = 1)+
+  geom_vline(xintercept = 0, linetype = 1)+
+  geom_point(data = dplyr::filter(df, DE_significance != "PValue < 0.05 in B1 and B2"), 
+             aes(x = logFC_b1, y = logFC_b2, color = DE_significance), alpha = 0.3)+
+  geom_point(data = dplyr::filter(df, DE_significance == "PValue < 0.05 in B1 and B2"), 
+             aes(x = logFC_b1, y = logFC_b2, color = DE_significance), alpha = 0.8)+
+  theme_bw()+
+  #geom_text_repel(data = dplyr::filter(df, DE_significance == "PValue < 0.05 in B1 and B2"), 
+  #           aes(x = logFC_b1, y = logFC_b2, label = gene_id), color = "#2f6e31")+
+  labs(title = "Batch1 vs Batch2 log2 fold change plot of significantly DE genes \n indicates very little concordance between replicates. \n Plot displays 1345 genes passing P < 0.05 in either of the two batches.",
+       x = "Batch 1 [log2 fold change]",
+       y = "Batch 2 [log2 fold change]")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_color_manual(labels = c("Batch 1, P < 0.05", 
+                                "Batch 1 & 2, P < 0.05", 
+                                "Batch 2, P < 0.05"), 
+                     values = c("#F8766D", 
+                                "#7CAE00", 
+                                "#00BFC4"))
+
+```
+
+
+```{r,  fig.width = 10, fig.height = 8}
+### Only genes with P<0.05 in both batches
+
+ggplot()+
+  geom_hline(yintercept = 0, linetype = 1)+
+  geom_vline(xintercept = 0, linetype = 1)+
+  #geom_point(data = dplyr::filter(df, DE_significance != "PValue < 0.05 in B1 and B2"), 
+  #           aes(x = logFC_b1, y = logFC_b2, color = DE_significance), alpha = 0.3)+
+  #geom_point(data = dplyr::filter(df, DE_significance == "PValue < 0.05 in B1 and B2"), 
+  #           aes(x = logFC_b1, y = logFC_b2, color = DE_significance), alpha = 0.8)+
+  theme_bw()+
+  geom_text_repel(data = dplyr::filter(df, DE_significance == "PValue < 0.05 in B1 and B2"), 
+             aes(x = logFC_b1, y = logFC_b2, label = gene_id), color = "#2f6e31")+
+  labs(title = "Batch1 vs Batch2 log2 fold change plot of significantly DE genes \n indicates very little concordance between replicates. \n Plot displays genes passing P < 0.05 in both batches.",
+       x = "Batch 1 [log2 fold change]",
+       y = "Batch 2 [log2 fold change]")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_color_manual(labels = c("Batch 1, P < 0.05", 
+                                "Batch 1 & 2, P < 0.05", 
+                                "Batch 2, P < 0.05"), 
+                     values = c("#F8766D", 
+                                "#7CAE00", 
+                                "#00BFC4"))
+```
+
+## 5.2 Male concordance
+
+```{r,  fig.width = 10, fig.height = 8}
+
+## Merge and compare DE signatures in the two batches
+colnames(DE_b1_Male) <- c("gene_id", "logFC_b1", "logCPM_b1", "LR_b1", "PValue_b1", "FDR_b1")
+colnames(DE_b2_Male) <- c("gene_id", "logFC_b2", "logCPM_b2", "LR_b2", "PValue_b2", "FDR_b2")
+
+DE_1_and_2_merged <- merge(DE_b1_Male, DE_b2_Male, by = "gene_id") # 12005 genes
+
+x <- DE_1_and_2_merged
+
+test <- ifelse(x$PValue_b1, "Non significant")
+test <- ifelse(x$PValue_b1 < 0.05, "PValue < 0.05 in B1", test)
+test <- ifelse(x$PValue_b2 < 0.05, "PValue < 0.05 in B2", test)
+test <- ifelse(x$PValue_b1 < 0.05 & x$PValue_b2 < 0.05, "PValue < 0.05 in B1 and B2", test)
+
+DE_1_and_2_merged$DE_significance <- test
+DE_1_and_2_merged_sig <- dplyr::filter(DE_1_and_2_merged, PValue_b1 < 0.05 | PValue_b2 < 0.05) # 1345 genes
+
+# Cap at -1 and +1 log2FC
+df <- DE_1_and_2_merged_sig
+df$logFC_b1 <- ifelse(df$logFC_b1 < -1, -1, df$logFC_b1)
+df$logFC_b1 <- ifelse(df$logFC_b1 > 1, 1, df$logFC_b1)
+
+df$logFC_b2 <- ifelse(df$logFC_b2 < -1, -1, df$logFC_b2)
+df$logFC_b2 <- ifelse(df$logFC_b2 > 1, 1, df$logFC_b2)
+
+df$DE_significance <- as.factor(df$DE_significance)
+
+library(ggrepel)
+
+ggplot()+
+  geom_hline(yintercept = 0, linetype = 1)+
+  geom_vline(xintercept = 0, linetype = 1)+
+  geom_point(data = dplyr::filter(df, DE_significance != "PValue < 0.05 in B1 and B2"), 
+             aes(x = logFC_b1, y = logFC_b2, color = DE_significance), alpha = 0.3)+
+  geom_point(data = dplyr::filter(df, DE_significance == "PValue < 0.05 in B1 and B2"), 
+             aes(x = logFC_b1, y = logFC_b2, color = DE_significance), alpha = 0.8)+
+  theme_bw()+
+  #geom_text_repel(data = dplyr::filter(df, DE_significance == "PValue < 0.05 in B1 and B2"), 
+  #           aes(x = logFC_b1, y = logFC_b2, label = gene_id), color = "#2f6e31")+
+  labs(title = "Batch1 vs Batch2 log2 fold change plot of significantly DE genes \n in Males",
+       x = "Batch 1 [log2 fold change]",
+       y = "Batch 2 [log2 fold change]")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_color_manual(labels = c("Batch 1, P < 0.05", 
+                                "Batch 1 & 2, P < 0.05", 
+                                "Batch 2, P < 0.05"), 
+                     values = c("#F8766D", 
+                                "#7CAE00", 
+                                "#00BFC4"))
+```
+
+
+## 5.3 Female concordance
+
+```{r,  fig.width = 10, fig.height = 8}
+
+## Merge and compare DE signatures in the two batches
+colnames(DE_b1_Female) <- c("gene_id", "logFC_b1", "logCPM_b1", "LR_b1", "PValue_b1", "FDR_b1")
+colnames(DE_b2_Female) <- c("gene_id", "logFC_b2", "logCPM_b2", "LR_b2", "PValue_b2", "FDR_b2")
+
+DE_1_and_2_merged <- merge(DE_b1_Female, DE_b2_Female, by = "gene_id") # 12005 genes
+
+x <- DE_1_and_2_merged
+
+test <- ifelse(x$PValue_b1, "Non significant")
+test <- ifelse(x$PValue_b1 < 0.05, "PValue < 0.05 in B1", test)
+test <- ifelse(x$PValue_b2 < 0.05, "PValue < 0.05 in B2", test)
+test <- ifelse(x$PValue_b1 < 0.05 & x$PValue_b2 < 0.05, "PValue < 0.05 in B1 and B2", test)
+
+DE_1_and_2_merged$DE_significance <- test
+DE_1_and_2_merged_sig <- dplyr::filter(DE_1_and_2_merged, PValue_b1 < 0.05 | PValue_b2 < 0.05) # 1345 genes
+
+# Cap at -1 and +1 log2FC
+df <- DE_1_and_2_merged_sig
+df$logFC_b1 <- ifelse(df$logFC_b1 < -1, -1, df$logFC_b1)
+df$logFC_b1 <- ifelse(df$logFC_b1 > 1, 1, df$logFC_b1)
+
+df$logFC_b2 <- ifelse(df$logFC_b2 < -1, -1, df$logFC_b2)
+df$logFC_b2 <- ifelse(df$logFC_b2 > 1, 1, df$logFC_b2)
+
+df$DE_significance <- as.factor(df$DE_significance)
+
+library(ggrepel)
+
+ggplot()+
+  geom_hline(yintercept = 0, linetype = 1)+
+  geom_vline(xintercept = 0, linetype = 1)+
+  geom_point(data = dplyr::filter(df, DE_significance != "PValue < 0.05 in B1 and B2"), 
+             aes(x = logFC_b1, y = logFC_b2, color = DE_significance), alpha = 0.3)+
+  geom_point(data = dplyr::filter(df, DE_significance == "PValue < 0.05 in B1 and B2"), 
+             aes(x = logFC_b1, y = logFC_b2, color = DE_significance), alpha = 0.8)+
+  theme_bw()+
+  #geom_text_repel(data = dplyr::filter(df, DE_significance == "PValue < 0.05 in B1 and B2"), 
+  #           aes(x = logFC_b1, y = logFC_b2, label = gene_id), color = "#2f6e31")+
+  labs(title = "Batch1 vs Batch2 log2 fold change plot of significantly DE genes \n in Females",
+       x = "Batch 1 [log2 fold change]",
+       y = "Batch 2 [log2 fold change]")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_color_manual(labels = c("Batch 1, P < 0.05", 
+                                "Batch 1 & 2, P < 0.05", 
+                                "Batch 2, P < 0.05"), 
+                     values = c("#F8766D", 
+                                "#7CAE00", 
+                                "#00BFC4"))
+
+
+```
+
+
+## 5.4 DE concordance using P value ranks 
+```{r,  fig.width = 10, fig.height = 8}
+
+df$b1_Prank <- rank(df$PValue_b1) 
+df$b2_Prank <- rank(df$PValue_b2) 
+
+
+ggplot(df, aes(x = b1_Prank, y = b2_Prank))+
+  geom_point(alpha = 0.5)+
+  theme_bw()+
+  geom_text_repel(data = dplyr::filter(df, DE_significance == "PValue < 0.05 in B1 and B2"), 
+             aes(x = b1_Prank, y = b2_Prank, label = gene_id), color = "#2f6e31")+
+  labs(title = "Batch 1 vs Batch 2 ranks of P values",
+       x = "Batch 1 P value",
+       y = "Batch 2 P value")
+  
+```
+
+## 5.5 Numbers of DE genes
+
+```{r, fig.cap="DE models include a sex covariate"}
+
+library(dplyr)
+
+numbers_of_DE <- function(DE_b1, DE_b2, label_1, label_2){
+    
+    B1_P_Up <- length(filter(DE_1_and_2_merged, logFC_b1 > 0, PValue_b1 < 0.05)$gene_id)
+    B1_P_Down <- length(filter(DE_1_and_2_merged, logFC_b1 < 0, PValue_b1 < 0.05)$gene_id)
+    
+    B2_P_Up <- length(filter(DE_1_and_2_merged, logFC_b2 > 0, PValue_b2 < 0.05)$gene_id)
+    B2_P_Down <- length(filter(DE_1_and_2_merged, logFC_b2 < 0, PValue_b2 < 0.05)$gene_id)
+    
+    
+    B1_FDR_Up <- length(filter(DE_1_and_2_merged, logFC_b1 > 0, FDR_b1 < 0.1)$gene_id)
+    B1_FDR_Down <- length(filter(DE_1_and_2_merged, logFC_b1 < 0, FDR_b1 < 0.1)$gene_id)
+    
+    B2_FDR_Up <- length(filter(DE_1_and_2_merged, logFC_b2 > 0, FDR_b2 < 0.1)$gene_id)
+    B2_FDR_Down <- length(filter(DE_1_and_2_merged, logFC_b2 < 0, FDR_b2 < 0.1)$gene_id)
+    
+    
+    
+    DE_df_n <- t(data.frame(
+        "Batch_1" = c(B1_P_Up, B1_P_Down, B1_FDR_Up, B1_FDR_Down),
+        "Batch_2" = c(B2_P_Up, B2_P_Down, B2_FDR_Up, B2_FDR_Down)))
+       
+    colnames(DE_df_n) <- c("Upregulated", "Downregulated", "Upregulated", "Downregulated")
+    
+    
+    
+    DE_df_n_melted <- reshape::melt(DE_df_n)
+    DE_df_n_melted$stat <- c(rep(", P < 0.05", 4), rep(", FDR < 0.1", 4))
+    
+    DE_df_n_melted$X2_stat <- paste(DE_df_n_melted$X2, DE_df_n_melted$stat)
+    
+    #DE_df_n_melted
+    
+    
+    ggplot(DE_df_n_melted, aes(fill=X2_stat, group=X2, x=X1, y=value))+
+        geom_bar(position = "dodge",  stat="identity", color="black")+
+        theme_bw()+
+        scale_fill_manual(values=c("#1F78B4", "#62a0ca", "#E31A1C", "#eb5e60"))+
+        theme(legend.title=element_blank())+
+        geom_text(aes(label=value), position=position_dodge(width=0.9), vjust = -0.7, hjust=0.5)+
+        #coord_flip()+
+        scale_x_discrete(limits = rev(levels(DE_df_n_melted$Var1)))+
+        theme_cowplot()+
+        theme(panel.border = element_blank(),
+              legend.title = element_blank(),
+              axis.ticks = element_blank(),
+              #axis.text  = element_blank(),
+              #axis.text.y = element_blank(),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank())+
+        theme(legend.position="none")+
+        labs(title="Number of DE genes with P < 0.05 and FDR < 0.1", x="", y="")+
+        theme(plot.title = element_text(size = 12, hjust=0.5, face = "plain"))
+    
+}
+
+numbers_of_DE(DE_b1, DE_b2, "Batch_1", "Batch_2")
+
+# save.image("G:/Shared drives/Nord Lab - Computational Projects/MAR_P2_integrated_batches_2021/session_12_09_21.RData")
+
+```
+
+
+```{r}
+
+#setwd("G:/Shared drives/Nord Lab - Computational Projects/MAR_P2_bulk_RNA-seq")
+
+#write.csv(DE_b1, file = "Batch_1_with_sex_covariate_DE_results.csv")
+#write.csv(DE_b2, file = "Batch_2_with_sex_covariate_DE_results.csv")
+#write.csv(DE_b1_and_2_batch_cor, file = "Batch_1_with_sex_and_batch_covariates_DE_results.csv")  
+
+#write.csv(DE_b1_Male, file = "Batch_1_Male_DE_results.csv")
+#write.csv(DE_b1_Female, file = "Batch_1_Female_DE_results.csv")
+#write.csv(DE_b2_Male, file = "Batch_2_Male_DE_results.csv")
+#write.csv(DE_b2_Female, file = "Batch_2_Female_DE_results.csv")
+
+```
+
+
+# 6. R sessionInfo()
+
+```{r}
+library(pander)
+
+pander(sessionInfo())
+
+```
